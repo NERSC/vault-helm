@@ -1,0 +1,63 @@
+{{- if and .Values.tlsAcme.enabled (not .Values.tlsAcme.webServer.existing) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openbao-wrapper.acmeWebsrvName" . }}
+  labels:
+    {{- include "openbao-wrapper.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.tlsAcme.webServer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "openbao-wrapper.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: acme-webroot
+  template:
+    metadata:
+      {{- with .Values.tlsAcme.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "openbao-wrapper.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: acme-webroot
+        {{- with .Values.tlsAcme.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.tlsAcme.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.tlsAcme.podSecurityContext | nindent 8 }}
+      containers:
+        - name: acme-webroot
+          image: {{ include "openbao-wrapper.acmeImage" . | quote }}
+          imagePullPolicy: {{ .Values.tlsAcme.image.pullPolicy }}
+          command:
+            - python3
+          args:
+            - -m
+            - http.server
+            - {{ .Values.tlsAcme.service.port | quote }}
+          securityContext:
+            {{- toYaml .Values.tlsAcme.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.tlsAcme.service.port }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.tlsAcme.webServer.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.tlsAcme.webServer.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.tlsAcme.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: {{ .Values.tlsAcme.webServer.webrootPath }}
+              name: acme-webroot
+          workingDir: {{ .Values.tlsAcme.webServer.webrootPath }}
+      volumes:
+        - name: acme-webroot
+          persistentVolumeClaim:
+            claimName: {{ include "openbao-wrapper.acmeClaimName" . }}
+{{- end }}

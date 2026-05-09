@@ -1,0 +1,16 @@
+{{- if and .Values.tlsAcme.enabled (not .Values.tlsAcme.webServer.existing) -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "openbao-wrapper.acmeClaimName" . }}
+  labels:
+    {{- include "openbao-wrapper.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.tlsAcme.webServer.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.tlsAcme.webServer.storageSize }}
+  storageClassName: {{ .Values.tlsAcme.webServer.storageClassName }}
+  volumeMode: Filesystem
+{{- end }}

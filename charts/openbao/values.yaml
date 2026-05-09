@@ -1,0 +1,318 @@
+nameOverride: ""
+fullnameOverride: openbao
+
+publicUrl: https://openbao.example.org
+cluster: development
+
+securityDefaults:
+  uid: 1000
+  gid: 1000
+
+imagePullSecrets: []
+
+ingress:
+  enabled: true
+  name: openbao
+  className: nginx
+  annotations: {}
+  userDomains:
+    - openbao.example.org
+  spinDomain: openbao.vault.example.internal
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: true
+    secretName: tls-cert
+    hosts: []
+  openbaoService:
+    name: openbao
+    port: 8200
+
+tlsAcme:
+  enabled: true
+  email: admin@example.org
+  image:
+    repository: ghcr.io/dingp/acme
+    tag: latest
+    pullPolicy: Always
+  imagePullSecrets: []
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 1000
+  resources: {}
+  service:
+    type: ClusterIP
+    port: 8080
+  cert:
+    secretName: tls-cert
+    createPlaceholder: true
+  kubeconfig:
+    secretName: kubeconfig
+  cronJob:
+    schedule: "5 12 1 */2 *"
+    concurrencyPolicy: Allow
+    failedJobsHistoryLimit: 1
+    successfulJobsHistoryLimit: 1
+    restartPolicy: Never
+  webServer:
+    existing: false
+    deploymentName: existing-websrv
+    serviceName: ""
+    claimName: pvc-existing-webroot
+    webrootPath: /www
+    replicaCount: 1
+    storageClassName: standard
+    storageSize: 1Gi
+    accessMode: ReadWriteMany
+    livenessProbe:
+      httpGet:
+        path: /
+        port: http
+    readinessProbe:
+      httpGet:
+        path: /
+        port: http
+
+oidc:
+  enabled: true
+  mountPath: oidc
+  publicUrl: https://openbao.example.org
+  discoveryUrl: https://oidc.example.org/realms/amsc
+  clientId: openbao
+  defaultRole: default
+  allowedRedirectUris:
+    - https://openbao.example.org/ui/vault/auth/oidc/oidc/callback
+    - https://openbao.example.org/v1/auth/oidc/oidc/callback
+    - http://localhost:8250/oidc/callback
+  clientSecret:
+    secretName: openbao-oidc-client
+    secretKey: client-secret
+  bootstrap:
+    enabled: false
+    baoAddr: http://openbao:8200
+    tokenSecret:
+      secretName: openbao-bootstrap-token
+      secretKey: token
+    image:
+      repository: quay.io/openbao/openbao
+      tag: "2.5.3"
+      pullPolicy: IfNotPresent
+    podAnnotations: {}
+    podLabels: {}
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: false
+      runAsNonRoot: true
+      runAsUser: 1000
+    resources: {}
+    backoffLimit: 2
+    hookDeletePolicy: before-hook-creation
+  policies:
+    - name: openbao-reader
+      rules: |
+        path "auth/token/lookup-self" {
+          capabilities = ["read"]
+        }
+
+        path "sys/mounts" {
+          capabilities = ["read", "list"]
+        }
+
+        path "sys/mounts/*" {
+          capabilities = ["read", "list"]
+        }
+    - name: openbao-admin
+      rules: |
+        path "*" {
+          capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+        }
+  roles:
+    - name: default
+      roleType: oidc
+      userClaim: preferred_username
+      scopes:
+        - openid
+        - profile
+        - email
+      boundAudiences:
+        - openbao
+      policies:
+        - openbao-reader
+      ttl: 1h
+      maxTtl: 8h
+    - name: default-device
+      roleType: oidc
+      callbackMode: device
+      userClaim: preferred_username
+      scopes:
+        - openid
+        - profile
+        - email
+      boundAudiences:
+        - openbao
+      policies:
+        - openbao-reader
+      ttl: 1h
+      maxTtl: 8h
+    - name: adminuser-admin
+      roleType: oidc
+      userClaim: preferred_username
+      scopes:
+        - openid
+        - profile
+        - email
+      boundAudiences:
+        - openbao
+      boundClaims:
+        preferred_username: admin@example.org
+      policies:
+        - openbao-admin
+      ttl: 1h
+      maxTtl: 8h
+    - name: adminuser-admin-device
+      roleType: oidc
+      callbackMode: device
+      userClaim: preferred_username
+      scopes:
+        - openid
+        - profile
+        - email
+      boundAudiences:
+        - openbao
+      boundClaims:
+        preferred_username: admin@example.org
+      policies:
+        - openbao-admin
+      ttl: 1h
+      maxTtl: 8h
+    - name: openbao-admins
+      roleType: oidc
+      userClaim: preferred_username
+      groupsClaim: groups
+      scopes:
+        - openid
+        - profile
+        - email
+      boundAudiences:
+        - openbao
+      boundClaims:
+        groups: openbao-admins
+      policies:
+        - openbao-admin
+      ttl: 1h
+      maxTtl: 8h
+    - name: openbao-admins-device
+      roleType: oidc
+      callbackMode: device
+      userClaim: preferred_username
+      groupsClaim: groups
+      scopes:
+        - openid
+        - profile
+        - email
+      boundAudiences:
+        - openbao
+      boundClaims:
+        groups: openbao-admins
+      policies:
+        - openbao-admin
+      ttl: 1h
+      maxTtl: 8h
+
+openbao:
+  fullnameOverride: openbao
+  global:
+    enabled: true
+    namespace: ""
+    tlsDisable: true
+    imagePullSecrets: []
+  injector:
+    enabled: false
+  csi:
+    enabled: false
+  ui:
+    enabled: true
+    serviceType: ClusterIP
+    externalPort: 8200
+    targetPort: 8200
+  server:
+    enabled: true
+    image:
+      registry: quay.io
+      repository: openbao/openbao
+      tag: ""
+      pullPolicy: IfNotPresent
+    resources: {}
+    ingress:
+      enabled: false
+    service:
+      enabled: true
+      type: ClusterIP
+      port: 8200
+      targetPort: 8200
+      publishNotReadyAddresses: true
+    authDelegator:
+      enabled: false
+    dataStorage:
+      enabled: true
+      size: 10Gi
+      mountPath: /openbao/data
+      storageClass: standard
+      accessMode: ReadWriteOnce
+    auditStorage:
+      enabled: false
+      storageClass: standard
+    standalone:
+      enabled: true
+      config: |
+        ui = true
+
+        listener "tcp" {
+          tls_disable = 1
+          address = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+
+        storage "file" {
+          path = "/openbao/data"
+        }
+    ha:
+      enabled: false
+    statefulSet:
+      securityContext:
+        pod:
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          fsGroup: 1000
+          seccompProfile:
+            type: RuntimeDefault
+        container:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          capabilities:
+            drop:
+              - ALL
+    affinity: ""
+    tolerations: []
+    nodeSelector: {}

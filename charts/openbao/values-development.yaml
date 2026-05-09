@@ -1,0 +1,15 @@
+oidc:
+  bootstrap:
+    enabled: true
+
+tlsAcme:
+  enabled: true
+
+ingress:
+  enabled: true
+
+openbao:
+  server:
+    dataStorage:
+      storageClass: standard
+      size: 10Gi

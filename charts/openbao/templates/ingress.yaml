@@ -1,0 +1,45 @@
+{{- if .Values.ingress.enabled -}}
+{{- $hosts := include "openbao-wrapper.ingressHosts" . | fromYamlArray -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.ingress.name | quote }}
+  labels:
+    {{- include "openbao-wrapper.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        {{- include "openbao-wrapper.tlsHosts" . | nindent 8 }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    {{- range $hosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          {{- if $.Values.tlsAcme.enabled }}
+          - path: /.well-known/acme-challenge
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openbao-wrapper.acmeServiceName" $ }}
+                port:
+                  number: {{ $.Values.tlsAcme.service.port }}
+          {{- end }}
+          - path: {{ $.Values.ingress.path }}
+            pathType: {{ $.Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ $.Values.ingress.openbaoService.name }}
+                port:
+                  number: {{ $.Values.ingress.openbaoService.port }}
+    {{- end }}
+{{- end }}

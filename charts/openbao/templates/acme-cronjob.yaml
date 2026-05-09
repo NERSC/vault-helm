@@ -1,0 +1,73 @@
+{{- if .Values.tlsAcme.enabled -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "openbao-wrapper.fullname" . }}-acme-renew
+  labels:
+    {{- include "openbao-wrapper.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.tlsAcme.cronJob.schedule | quote }}
+  concurrencyPolicy: {{ .Values.tlsAcme.cronJob.concurrencyPolicy }}
+  failedJobsHistoryLimit: {{ .Values.tlsAcme.cronJob.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ .Values.tlsAcme.cronJob.successfulJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "openbao-wrapper.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: acme-renew
+        spec:
+          {{- with .Values.tlsAcme.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          restartPolicy: {{ .Values.tlsAcme.cronJob.restartPolicy }}
+          securityContext:
+            {{- toYaml .Values.tlsAcme.podSecurityContext | nindent 12 }}
+          containers:
+            - name: acme-renew
+              image: {{ include "openbao-wrapper.acmeImage" . | quote }}
+              imagePullPolicy: {{ .Values.tlsAcme.image.pullPolicy }}
+              command:
+                {{- if .Values.tlsAcme.webServer.existing }}
+                - /opt/get_cert_update_ssl_with_websrv.sh
+                {{- else }}
+                - /opt/get_cert_update_ssl.sh
+                {{- end }}
+              env:
+                - name: EMAIL
+                  value: {{ .Values.tlsAcme.email | quote }}
+                - name: DOMAIN
+                  value: {{ join ":" .Values.ingress.userDomains | quote }}
+                - name: KUBECONFIG
+                  value: /kube/{{ .Values.tlsAcme.kubeconfig.secretName }}
+                - name: CERT_SECRET_NAME
+                  value: {{ .Values.tlsAcme.cert.secretName | quote }}
+                - name: INGRESS_NAME
+                  value: {{ .Values.ingress.name | quote }}
+                - name: WEB_ROOT
+                  value: {{ .Values.tlsAcme.webServer.webrootPath | quote }}
+                {{- if not .Values.tlsAcme.webServer.existing }}
+                - name: DUMMY_WEBSERVER
+                  value: {{ include "openbao-wrapper.acmeWebsrvName" . | quote }}
+                {{- end }}
+              securityContext:
+                {{- toYaml .Values.tlsAcme.securityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.tlsAcme.resources | nindent 16 }}
+              volumeMounts:
+                - mountPath: {{ .Values.tlsAcme.webServer.webrootPath }}
+                  name: acme-webroot
+                - mountPath: /kube
+                  name: kubeconfig
+          volumes:
+            - name: acme-webroot
+              persistentVolumeClaim:
+                claimName: {{ include "openbao-wrapper.acmeClaimName" . }}
+            - name: kubeconfig
+              secret:
+                defaultMode: 438
+                optional: false
+                secretName: {{ .Values.tlsAcme.kubeconfig.secretName }}
+{{- end }}

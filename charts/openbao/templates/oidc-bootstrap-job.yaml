@@ -1,0 +1,137 @@
+{{- if and .Values.oidc.enabled .Values.oidc.bootstrap.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "openbao-wrapper.fullname" . }}-oidc-bootstrap
+  labels:
+    {{- include "openbao-wrapper.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": {{ .Values.oidc.bootstrap.hookDeletePolicy | quote }}
+spec:
+  backoffLimit: {{ .Values.oidc.bootstrap.backoffLimit }}
+  template:
+    metadata:
+      {{- with .Values.oidc.bootstrap.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "openbao-wrapper.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: oidc-bootstrap
+        {{- with .Values.oidc.bootstrap.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      restartPolicy: Never
+      securityContext:
+        {{- toYaml .Values.oidc.bootstrap.podSecurityContext | nindent 8 }}
+      containers:
+        - name: oidc-bootstrap
+          image: {{ include "openbao-wrapper.oidcBootstrapImage" . | quote }}
+          imagePullPolicy: {{ .Values.oidc.bootstrap.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.oidc.bootstrap.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.oidc.bootstrap.resources | nindent 12 }}
+          env:
+            - name: BAO_ADDR
+              value: {{ .Values.oidc.bootstrap.baoAddr | quote }}
+            - name: BAO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.bootstrap.tokenSecret.secretName }}
+                  key: {{ .Values.oidc.bootstrap.tokenSecret.secretKey }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.clientSecret.secretName }}
+                  key: {{ .Values.oidc.clientSecret.secretKey }}
+            - name: OIDC_MOUNT
+              value: {{ .Values.oidc.mountPath | quote }}
+            - name: OIDC_DISCOVERY_URL
+              value: {{ .Values.oidc.discoveryUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: OIDC_DEFAULT_ROLE
+              value: {{ .Values.oidc.defaultRole | quote }}
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              set -eu
+
+              echo "Waiting for OpenBao at ${BAO_ADDR} to be reachable and unsealed"
+              for i in $(seq 1 60); do
+                bao status >/tmp/bao-status 2>&1 || true
+                if grep -q "Sealed[[:space:]]*false" /tmp/bao-status; then
+                  break
+                fi
+                cat /tmp/bao-status || true
+                sleep 5
+              done
+
+              if ! grep -q "Sealed[[:space:]]*false" /tmp/bao-status; then
+                echo "OpenBao did not become unsealed before timeout"
+                cat /tmp/bao-status || true
+                exit 1
+              fi
+
+              if ! bao auth list | awk '{print $1}' | grep -qx "${OIDC_MOUNT}/"; then
+                bao auth enable -path="${OIDC_MOUNT}" oidc
+              fi
+
+              bao write "auth/${OIDC_MOUNT}/config" \
+                oidc_discovery_url="${OIDC_DISCOVERY_URL}" \
+                oidc_client_id="${OIDC_CLIENT_ID}" \
+                oidc_client_secret="${OIDC_CLIENT_SECRET}" \
+                default_role="${OIDC_DEFAULT_ROLE}"
+
+              {{- range .Values.oidc.policies }}
+              cat <<'POLICY_{{ .name | replace "-" "_" }}' | bao policy write {{ .name | quote }} -
+              {{- .rules | nindent 14 }}
+              POLICY_{{ .name | replace "-" "_" }}
+              {{- end }}
+
+              {{- range .Values.oidc.roles }}
+              {{- $rolePayload := dict "role_type" (default "oidc" .roleType) "user_claim" (default "preferred_username" .userClaim) "groups_claim" (default "" .groupsClaim) "allowed_redirect_uris" (default $.Values.oidc.allowedRedirectUris .allowedRedirectUris) "token_policies" .policies }}
+              {{- with .scopes }}
+              {{- $_ := set $rolePayload "oidc_scopes" . }}
+              {{- end }}
+              {{- with .boundAudiences }}
+              {{- $_ := set $rolePayload "bound_audiences" . }}
+              {{- end }}
+              {{- with .boundClaims }}
+              {{- $_ := set $rolePayload "bound_claims" . }}
+              {{- end }}
+              {{- with .claimMappings }}
+              {{- $_ := set $rolePayload "claim_mappings" . }}
+              {{- end }}
+              {{- with .callbackMode }}
+              {{- $_ := set $rolePayload "callback_mode" . }}
+              {{- end }}
+              {{- with .pollInterval }}
+              {{- $_ := set $rolePayload "poll_interval" . }}
+              {{- end }}
+              {{- with .ttl }}
+              {{- $_ := set $rolePayload "ttl" . }}
+              {{- end }}
+              {{- with .maxTtl }}
+              {{- $_ := set $rolePayload "max_ttl" . }}
+              {{- end }}
+              cat >"/tmp/oidc-role-{{ .name }}.json" <<'JSON_ROLE_{{ .name | replace "-" "_" }}'
+              {{- $rolePayload | toPrettyJson | nindent 14 }}
+              JSON_ROLE_{{ .name | replace "-" "_" }}
+              if ! wget -q -O "/tmp/oidc-role-{{ .name }}.response" \
+                --header "X-Vault-Token: ${BAO_TOKEN}" \
+                --header "Content-Type: application/json" \
+                --post-file "/tmp/oidc-role-{{ .name }}.json" \
+                "${BAO_ADDR}/v1/auth/${OIDC_MOUNT}/role/{{ .name }}"; then
+                echo "Failed to write OIDC role {{ .name }}"
+                cat "/tmp/oidc-role-{{ .name }}.response" || true
+                exit 1
+              fi
+              {{- end }}
+{{- end }}

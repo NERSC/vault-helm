@@ -1,0 +1,18 @@
+{{- if and .Values.tlsAcme.enabled (not .Values.tlsAcme.webServer.existing) -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openbao-wrapper.acmeServiceName" . }}
+  labels:
+    {{- include "openbao-wrapper.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.tlsAcme.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.tlsAcme.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "openbao-wrapper.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: acme-webroot
+{{- end }}
