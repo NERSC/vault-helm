@@ -239,6 +239,12 @@ oidc:
 
 openbao:
   fullnameOverride: openbao
+  autoUnseal:
+    rawConfig: ""
+    static:
+      enabled: false
+      currentKeyId: "static-key-1"
+      keyEnvVar: OPENBAO_STATIC_SEAL_KEY
   global:
     enabled: true
     namespace: ""
@@ -284,6 +290,15 @@ openbao:
       enabled: true
       config: |
         ui = true
+
+        {{ if .Values.autoUnseal.rawConfig }}
+        {{ .Values.autoUnseal.rawConfig | nindent 8 }}
+        {{ else if .Values.autoUnseal.static.enabled }}
+        seal "static" {
+          current_key_id = "{{ .Values.autoUnseal.static.currentKeyId }}"
+          current_key    = "env://{{ .Values.autoUnseal.static.keyEnvVar }}"
+        }
+        {{ end }}
 
         listener "tcp" {
           tls_disable = 1

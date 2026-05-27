@@ -1,0 +1,15 @@
+# Example values for migrating an initialized Shamir-sealed OpenBao deployment
+# to static auto-unseal. Do not commit or place the static seal key itself in
+# values files; create the referenced Kubernetes Secret separately.
+openbao:
+  autoUnseal:
+    static:
+      enabled: true
+      currentKeyId: "2026-05-27-1"
+      keyEnvVar: OPENBAO_STATIC_SEAL_KEY
+
+  server:
+    extraSecretEnvironmentVars:
+      - envName: OPENBAO_STATIC_SEAL_KEY
+        secretName: openbao-static-seal
+        secretKey: OPENBAO_STATIC_SEAL_KEY

@@ -120,6 +120,90 @@ helm upgrade --install openbao charts/openbao \
   -f charts/openbao/values-development.yaml
 ```
 
+## Auto-Unseal
+
+Auto-unseal is disabled by default. The default deployment uses Shamir unseal keys, so an operator must manually unseal OpenBao after pod restarts.
+
+The chart supports explicit auto-unseal configuration through `openbao.autoUnseal`. For production, prefer an external trust source such as AWS KMS, GCP Cloud KMS, Azure Key Vault, PKCS#11, KMIP, OCI KMS, or a separate OpenBao transit instance. Static seal with a Kubernetes Secret is operationally simple, but it is weaker than KMS/HSM-backed seal because anyone who can read both the OpenBao PVC and the static seal Secret can decrypt the instance.
+
+### Static Auto-Unseal
+
+Generate a 32-byte key and store it in a Kubernetes Secret:
+
+```bash
+openssl rand -base64 32
+
+kubectl -n vault create secret generic openbao-static-seal \
+  --from-literal=OPENBAO_STATIC_SEAL_KEY='<BASE64_32_BYTE_KEY>'
+```
+
+The example values file `charts/openbao/values-auto-unseal-static.example.yaml` enables static auto-unseal and wires the Secret into the OpenBao container:
+
+```yaml
+openbao:
+  autoUnseal:
+    static:
+      enabled: true
+      currentKeyId: "2026-05-27-1"
+      keyEnvVar: OPENBAO_STATIC_SEAL_KEY
+
+  server:
+    extraSecretEnvironmentVars:
+      - envName: OPENBAO_STATIC_SEAL_KEY
+        secretName: openbao-static-seal
+        secretKey: OPENBAO_STATIC_SEAL_KEY
+```
+
+Apply the values:
+
+```bash
+helm upgrade --install openbao charts/openbao \
+  --namespace vault \
+  -f charts/openbao/values-development.yaml \
+  -f charts/openbao/values-auto-unseal-static.example.yaml
+```
+
+The OpenBao StatefulSet uses `OnDelete`, so restart the pod to use the new server configuration:
+
+```bash
+kubectl -n vault delete pod openbao-0
+```
+
+Migrate from Shamir to auto-unseal by entering the existing Shamir unseal keys. Run this until the threshold is satisfied:
+
+```bash
+kubectl -n vault exec -it openbao-0 -- bao operator unseal -migrate
+```
+
+For the current `5` shares / `3` threshold deployment, run it three times with three different existing unseal keys. Keep the old Shamir keys until migration and restart validation are complete.
+
+Validate auto-unseal:
+
+```bash
+kubectl -n vault exec openbao-0 -- bao status
+kubectl -n vault delete pod openbao-0
+kubectl -n vault get pod openbao-0
+kubectl -n vault exec openbao-0 -- bao status
+```
+
+After the restart, `bao status` should show `Sealed false` without manual key entry.
+
+### Other Seal Backends
+
+For a production-oriented seal backend, set `openbao.autoUnseal.rawConfig` to the complete OpenBao `seal` stanza and provide any required credentials through `openbao.server.extraSecretEnvironmentVars`, mounted files, workload identity, or the cloud provider's native identity mechanism.
+
+Example shape:
+
+```yaml
+openbao:
+  autoUnseal:
+    rawConfig: |
+      seal "awskms" {
+        region     = "us-west-2"
+        kms_key_id = "<KMS_KEY_ID>"
+      }
+```
+
 ## TLS ACME
 
 TLS ACME renewal is enabled by default. The CronJob:
@@ -164,6 +248,9 @@ Lint and render:
 helm lint charts/openbao
 helm template openbao charts/openbao --namespace vault
 helm template openbao charts/openbao --namespace vault -f charts/openbao/values-development.yaml
+helm template openbao charts/openbao --namespace vault \
+  -f charts/openbao/values-development.yaml \
+  -f charts/openbao/values-auto-unseal-static.example.yaml
 ```
 
 Dry-run an upgrade against the cluster:
